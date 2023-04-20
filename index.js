@@ -8,9 +8,10 @@ const readline = createInterface({
     output: process.stdout,
 })
 
-const chess = new Chess()
-
 const SERIAL_OPS = {
+    BEEP: 0x03,
+    UNLOCK: 0x04,
+    PING: 0x7f,
     READ_ANGLE: 0x80,
     READ_POS: 0x81,
     CORNER_DEF: 0x82,
@@ -215,6 +216,10 @@ function promptCommand() {
                 let helpText = 'help \t\t Display this text.\n'
 
                 helpText += `reset\t\t Reset board to start of game.\n`
+                helpText += `unlock\t\t Unlock arm for corner calibration.\n`
+                helpText += `setcorner ${chalk.italic(
+                    'corner_x corner_y'
+                )}\t\t Set corner at coords.\n`
 
                 helpText += `${chalk.italic(
                     'move_string'
@@ -232,6 +237,45 @@ function promptCommand() {
                     )
                 } else {
                     await reset()
+                }
+                break
+
+            case 'unlock':
+                if (commParts.length !== 1) {
+                    result = chalk.red(
+                        `"unlock" command expects 0 args but got ${
+                            commParts.length - 1
+                        }`
+                    )
+                } else {
+                    writeSerial(SERIAL_OPS.UNLOCK)
+                }
+                break
+
+            case 'setcorner':
+                if (commParts.length !== 3) {
+                    result = chalk.red(
+                        `"setcorner" command expects 2 args but got ${
+                            commParts.length - 1
+                        }`
+                    )
+                } else {
+                    writeSerial(
+                        SERIAL_OPS.CORNER_DEF,
+                        new Uint8Array([commParts[1], commParts[2]])
+                    )
+                }
+                break
+
+            case 'beep':
+                if (commParts.length !== 1) {
+                    result = chalk.red(
+                        `"beep" command expects 0 args but got ${
+                            commParts.length - 1
+                        }`
+                    )
+                } else {
+                    writeSerial(SERIAL_OPS.BEEP)
                 }
                 break
 
@@ -264,6 +308,8 @@ function promptCommand() {
 }
 
 initSerial()
+
+writeSerial(SERIAL_OPS.PING)
 
 printGameStatus()
 
