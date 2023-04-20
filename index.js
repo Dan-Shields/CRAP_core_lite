@@ -21,6 +21,88 @@ const SERIAL_OPS = {
     MOVE_ANGLES: 0x05,
 }
 
+const ACK_TYPE = {
+    NACK: 0x01,
+    ACK: 0x02,
+    MSG: 0xff,
+}
+
+const NACK_TYPE = {
+    OP: 0xff,
+    SUM: 0xfe,
+    ARG: 0xfd,
+    NOGOAL: 0xfc,
+}
+
+const BYTESIZE = 8,
+    PARITY = 'N',
+    STOPBITS = 1,
+    com = 'COM6',
+    baudRate = 9600
+
+let port
+
+function initSerial() {
+    port = new SerialPort({
+        path: com,
+        baudRate,
+        parity: PARITY,
+        stopBits: STOPBITS,
+    })
+
+    port.on('error', (e) => {
+        console.error(`Serial Error: ${e}`)
+    })
+}
+
+async function portReadable() {
+    return new Promise((resolve, reject) => {
+        port.on('readable', () => {
+            resolve()
+        })
+    })
+}
+
+function readSerialMsg() {
+    let len
+    while (!(len = port.read(1))) continue
+    msg = port.read(len[0])
+    console.log(`M: ${msg}`)
+}
+
+async function writeSerial(op, data = new Uint8Array([])) {
+    console.log(`sending serial command: 0x${op.toString(16)}, data: ${data}`)
+
+    const pkt = new Uint8Array([
+        op,
+        data.length,
+        ...data,
+        data.length ? data.reduce((a, b) => a + b) & 0xff : 0,
+    ])
+
+    const writeResult = port.write(pkt, 'hex', (e) => {
+        if (e) console.error(`error while writing: ${e}`)
+    })
+
+    await portReadable()
+
+    let ack
+    while ((ack = port.read(1)[0]) === ACK_TYPE.MSG) readSerialMsg()
+
+    // console.log(ack)
+
+    if (ack != ACK_TYPE.ACK) throw Error(NACK_TYPE[port.read(1)?.[0]])
+
+    if (op === 0x80 || op === 0x81) {
+        let len
+        await portReadable()
+        while (!(len = port.read(1))) continue
+        return port.read(len[0])
+    }
+}
+
+const chess = new Chess()
+
 function printGameStatus() {
     console.log(chalk.underline('\nCurrent board:'))
 
@@ -37,36 +119,39 @@ function anToCoord(an) {
     return [an.charCodeAt(0) - 97, parseInt(an[1] - 1)]
 }
 
-function writeSerial(op, ...data) {
-    console.log(`sending serial command: ${op} ${data}`)
-}
-
 function tryMove(_move) {
     try {
         const move = chess.move(_move)
 
         // standard capture
         if (move.captured && !move.flags.includes('e')) {
-            writeSerial(SERIAL_OPS.TAKE_PIECE, anToCoord(move.to))
+            writeSerial(
+                SERIAL_OPS.TAKE_PIECE,
+                new Uint8Array(anToCoord(move.to))
+            )
         }
 
         if (move.promotion) {
             // remove pawn
-            writeSerial(SERIAL_OPS.TAKE_PIECE, anToCoord(move.from))
+            writeSerial(
+                SERIAL_OPS.TAKE_PIECE,
+                new Uint8Array(anToCoord(move.from))
+            )
 
             // move promotion piece to promotion square
             writeSerial(
                 SERIAL_OPS.MOVE_PIECE,
-                move.color == 'w' ? -1 : 8,
-                0,
-                anToCoord(move.to)
+                new Uint8Array([
+                    move.color == 'w' ? -1 : 8,
+                    0,
+                    ...anToCoord(move.to),
+                ])
             )
         } else {
             // standard move
             writeSerial(
                 SERIAL_OPS.MOVE_PIECE,
-                anToCoord(move.from),
-                anToCoord(move.to)
+                new Uint8Array([...anToCoord(move.from), ...anToCoord(move.to)])
             )
         }
 
@@ -76,7 +161,7 @@ function tryMove(_move) {
 
             coords[1] += move.color == 'w' ? -1 : 1
 
-            writeSerial(SERIAL_OPS.TAKE_PIECE, coords)
+            writeSerial(SERIAL_OPS.TAKE_PIECE, new Uint8Array(coords))
         }
 
         // castling
@@ -89,7 +174,7 @@ function tryMove(_move) {
                 move.flags.includes('k') ? 5 : 0,
                 move.color == 'w' ? 0 : 7,
             ]
-            writeSerial(SERIAL_OPS.MOVE_PIECE, from, to)
+            writeSerial(SERIAL_OPS.MOVE_PIECE, new Uint8Array([...from, ...to]))
         }
     } catch (e) {
         return e
@@ -160,11 +245,12 @@ function promptCommand() {
                 } else {
                     const res = tryMove(commParts[0])
 
-                    if (res)
+                    if (res) {
                         result = chalk.red(`Invalid move "${commParts[0]}"\n`)
-                    result += chalk.yellow(
-                        'Type "help" to see list of available commands'
-                    )
+                        result += chalk.yellow(
+                            'Type "help" to see list of available commands'
+                        )
+                    }
                 }
                 break
         }
@@ -176,6 +262,8 @@ function promptCommand() {
         promptCommand()
     })
 }
+
+initSerial()
 
 printGameStatus()
 
